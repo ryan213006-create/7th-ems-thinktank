@@ -4,7 +4,7 @@ import {
   CheckCircle2, Clock, AlertCircle, Megaphone, Calendar, MapPin,
   MessageSquare, ExternalLink, BookOpen, FolderOpen, PlaySquare,
   BarChart2, Activity, TrendingUp, TestTube, Star, Home, Layers, Shield,
-  ThumbsUp, X
+  ThumbsUp, ThumbsDown, X, MessageCircle
 } from 'lucide-react';
 
 const parseCSV = (csvText) => {
@@ -52,11 +52,94 @@ const parseCSV = (csvText) => {
   });
 };
 
+// 動態星等顯示元件 (支援半顆星)
+const StarRating = ({ rating }) => {
+  const numRating = parseFloat(rating) || 0;
+  const fullStars = Math.floor(numRating);
+  const hasHalf = numRating % 1 >= 0.3 && numRating % 1 <= 0.7;
+  const fullPlus = numRating % 1 > 0.7 ? 1 : 0;
+  const totalFilled = fullStars + fullPlus;
+  return (
+    <div className="flex">
+      {[1, 2, 3, 4, 5].map(i => {
+        if (i <= totalFilled) return <Star key={i} className="w-4 h-4 fill-current text-amber-400" />;
+        if (i === totalFilled + 1 && hasHalf) {
+          return (
+            <div key={i} className="relative">
+              <Star className="w-4 h-4 text-slate-200" />
+              <div className="absolute inset-0 overflow-hidden" style={{ width: '50%' }}>
+                <Star className="w-4 h-4 fill-current text-amber-400" />
+              </div>
+            </div>
+          );
+        }
+        return <Star key={i} className="w-4 h-4 text-slate-200" />;
+      })}
+    </div>
+  );
+};
+
+// 星等分布條
+const RatingDistribution = ({ counts, totalPeople }) => {
+  const safe = (n) => parseInt(n) || 0;
+  const stars = [
+    { label: 5, count: safe(counts.five) },
+    { label: 4, count: safe(counts.four) },
+    { label: 3, count: safe(counts.three) },
+    { label: 2, count: safe(counts.two) },
+    { label: 1, count: safe(counts.one) }
+  ];
+  return (
+    <div className="space-y-1.5">
+      {stars.map(s => {
+        const percent = totalPeople > 0 ? (s.count / totalPeople) * 100 : 0;
+        return (
+          <div key={s.label} className="flex items-center text-xs">
+            <span className="w-3 text-slate-500 font-bold">{s.label}</span>
+            <Star className="w-3 h-3 text-amber-400 fill-current mx-1" />
+            <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+              <div className="bg-gradient-to-r from-amber-300 to-amber-500 h-full rounded-full transition-all duration-500" style={{ width: `${percent}%` }}></div>
+            </div>
+            <span className="w-8 text-right text-slate-600 font-medium ml-2">{s.count}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// 留言區塊 (優點/痛點/中立建議)
+const FeedbackSection = ({ comments, type }) => {
+  const config = {
+    pros: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', title: '🟢 同仁優點' },
+    cons: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', title: '🔴 同仁痛點' },
+    suggest: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', title: '💡 同仁建議' }
+  };
+  const c = config[type];
+  if (!comments || comments.length === 0) return null;
+  return (
+    <div className={`${c.bg} ${c.border} border rounded-xl p-3 mb-2`}>
+      <h5 className={`text-xs font-bold ${c.text} mb-2 flex items-center`}>
+        {c.title} <span className="ml-1 text-slate-500 font-normal">({comments.length})</span>
+      </h5>
+      <ul className="space-y-1.5">
+        {comments.map((comment, idx) => (
+          <li key={idx} className="text-xs text-slate-700 leading-relaxed pl-2">
+            <span className={`${c.text} font-bold mr-1`}>▎</span>{comment}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
 const App = () => {
   const [activeTab, setActiveTab] = useState('home');
   const [activeSubTab, setActiveSubTab] = useState('tasks');
   const [showVoteModal, setShowVoteModal] = useState(false);
   const [selectedProposalForVote, setSelectedProposalForVote] = useState('');
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [selectedEquipment, setSelectedEquipment] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [announcement, setAnnouncement] = useState(null);
@@ -68,6 +151,7 @@ const App = () => {
 
   const SHEET_ID = '1TC-s5WN4qEvL9AFy_rMauZXJ2mbWUlay9inGUYeu7s8';
   const VOTE_FORM_URL = "https://docs.google.com/forms/d/1FbhwPOdz8CPEWV4kKKDg7BT58ZuC8-3gYsSxfvq5yek/viewform?embedded=true";
+  const FEEDBACK_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSext9OHR2mkivRLgoVtvFRiHY540lY9m1eybc_7eZVrQu09VA/viewform?embedded=true";
 
   useEffect(() => {
     const fetchDatabase = async () => {
@@ -103,9 +187,24 @@ const App = () => {
           id: d.id, title: d['提案名稱'], author: d['提案人'], date: d['提案日期'], status: d['狀態'], likes: d['支持數']
         })));
 
+        // 升級版裝備資料解析
         setEquipments(eqData.filter(d => d.id).map(d => ({
-          id: d.id, name: d['測試裝備名稱'], stage: d['測試階段'], testers: d['測試單位'], rating: d['目前評分'], feedbackCount: d['回饋人數'],
-          comments: d['近期真實回饋 (使用｜分隔多則留言)'] ? d['近期真實回饋 (使用｜分隔多則留言)'].split('｜') : []
+          id: d.id,
+          name: d['測試裝備名稱'],
+          stage: d['測試階段'],
+          testers: d['測試單位'],
+          rating: d['目前評分'],
+          feedbackCount: d['回饋人數'],
+          stars: {
+            five: d['五星數'],
+            four: d['四星數'],
+            three: d['三星數'],
+            two: d['二星數'],
+            one: d['一星數']
+          },
+          pros: d['優點留言'] ? d['優點留言'].split('｜').filter(x => x.trim()) : [],
+          cons: d['痛點留言'] ? d['痛點留言'].split('｜').filter(x => x.trim()) : [],
+          suggest: d['中立建議留言'] ? d['中立建議留言'].split('｜').filter(x => x.trim()) : []
         })));
 
         setMinutes(minutesData.filter(d => d.id).map(d => ({
@@ -227,9 +326,9 @@ const App = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
                 <div className="border border-slate-100 p-5 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start">
-                    <div className="text-sky-600 bg-sky-50 p-2 rounded-lg"><Activity className="w-5 h-5"/></div>
+                    <div className="text-sky-600 bg-sky-50 p-2 rounded-lg"><Activity className="w-5 h-5" /></div>
                     <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full flex items-center">
-                      <TrendingUp className="w-3 h-3 mr-1"/> {dashboard.ohca['趨勢符號']}{dashboard.ohca['趨勢數值']}
+                      <TrendingUp className="w-3 h-3 mr-1" /> {dashboard.ohca['趨勢符號']}{dashboard.ohca['趨勢數值']}
                     </span>
                   </div>
                   <h3 className="text-slate-500 text-sm mt-4 font-medium">{dashboard.ohca['指標名稱'] || 'OHCA 辨識比例'}</h3>
@@ -239,9 +338,9 @@ const App = () => {
 
                 <div className="border border-slate-100 p-5 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start">
-                    <div className="text-teal-600 bg-teal-50 p-2 rounded-lg"><Activity className="w-5 h-5"/></div>
+                    <div className="text-teal-600 bg-teal-50 p-2 rounded-lg"><Activity className="w-5 h-5" /></div>
                     <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full flex items-center">
-                      <TrendingUp className="w-3 h-3 mr-1"/> {dashboard.ccf['趨勢符號']}{dashboard.ccf['趨勢數值']}
+                      <TrendingUp className="w-3 h-3 mr-1" /> {dashboard.ccf['趨勢符號']}{dashboard.ccf['趨勢數值']}
                     </span>
                   </div>
                   <h3 className="text-slate-500 text-sm mt-4 font-medium">{dashboard.ccf['指標名稱'] || 'CCF 達標率'}</h3>
@@ -251,7 +350,7 @@ const App = () => {
 
                 <div className="border border-slate-100 p-5 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start">
-                    <div className="text-indigo-600 bg-indigo-50 p-2 rounded-lg"><MessageSquare className="w-5 h-5"/></div>
+                    <div className="text-indigo-600 bg-indigo-50 p-2 rounded-lg"><MessageSquare className="w-5 h-5" /></div>
                     <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-full">{dashboard.proposal['趨勢數值']}</span>
                   </div>
                   <h3 className="text-slate-500 text-sm mt-4 font-medium">{dashboard.proposal['指標名稱'] || '行動提案'}</h3>
@@ -292,9 +391,9 @@ const App = () => {
           {activeTab === 'projects' && !isLoading && !loadError && (
             <div>
               <div className="flex space-x-2 mb-8 border-b border-slate-100 pb-4 overflow-x-auto">
-                <button onClick={() => setActiveSubTab('tasks')} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeSubTab === 'tasks' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}><FolderKanban className="inline w-4 h-4 mr-2 mb-0.5"/> 智庫任務列管</button>
-                <button onClick={() => setActiveSubTab('proposals')} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeSubTab === 'proposals' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}><Lightbulb className="inline w-4 h-4 mr-2 mb-0.5"/> 同仁實務提案</button>
-                <button onClick={() => setActiveSubTab('equipment')} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeSubTab === 'equipment' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}><TestTube className="inline w-4 h-4 mr-2 mb-0.5"/> 裝備實測回饋</button>
+                <button onClick={() => setActiveSubTab('tasks')} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeSubTab === 'tasks' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}><FolderKanban className="inline w-4 h-4 mr-2 mb-0.5" /> 智庫任務列管</button>
+                <button onClick={() => setActiveSubTab('proposals')} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeSubTab === 'proposals' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}><Lightbulb className="inline w-4 h-4 mr-2 mb-0.5" /> 同仁實務提案</button>
+                <button onClick={() => setActiveSubTab('equipment')} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeSubTab === 'equipment' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}><TestTube className="inline w-4 h-4 mr-2 mb-0.5" /> 裝備實測回饋</button>
               </div>
 
               {activeSubTab === 'tasks' && (
@@ -337,7 +436,7 @@ const App = () => {
                         </div>
                         <div className="flex justify-between items-center border-t border-slate-100 pt-4">
                           <span className="flex items-center text-blue-600 font-bold text-lg">
-                            <Lightbulb className="w-5 h-5 mr-1.5"/> {prop.likes} <span className="text-sm text-slate-500 font-normal ml-1">人支持</span>
+                            <Lightbulb className="w-5 h-5 mr-1.5" /> {prop.likes} <span className="text-sm text-slate-500 font-normal ml-1">人支持</span>
                           </span>
                           <button
                             onClick={() => {
@@ -346,7 +445,7 @@ const App = () => {
                             }}
                             className="flex items-center text-sm bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white px-4 py-2 rounded-xl font-bold transition-all"
                           >
-                            <ThumbsUp className="w-4 h-4 mr-2"/> 我要附議
+                            <ThumbsUp className="w-4 h-4 mr-2" /> 我要附議
                           </button>
                         </div>
                       </div>
@@ -356,43 +455,66 @@ const App = () => {
               )}
 
               {activeSubTab === 'equipment' && (
-                <div className="grid gap-6 sm:grid-cols-2">
-                  {equipments.map(eq => (
-                    <div key={eq.id} className="border border-slate-200 rounded-2xl overflow-hidden hover:shadow-md transition-shadow flex flex-col bg-white">
-                      <div className="bg-slate-50 border-b border-slate-100 p-5">
-                        <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-bold text-lg text-slate-800">{eq.name}</h3>
-                          <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded font-bold">{eq.stage}</span>
+                <div>
+                  <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <p className="text-sm text-slate-500">所有同仁的真實使用心得,點「我要回饋」分享您的經驗!</p>
+                  </div>
+                  <div className="grid gap-6 sm:grid-cols-2">
+                    {equipments.map(eq => (
+                      <div key={eq.id} className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col bg-white">
+                        <div className="bg-gradient-to-r from-slate-50 to-blue-50 border-b border-slate-100 p-5">
+                          <div className="flex justify-between items-start mb-2">
+                            <h3 className="font-bold text-lg text-slate-800">{eq.name}</h3>
+                            <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap">{eq.stage}</span>
+                          </div>
+                          <p className="text-sm text-slate-500">測試單位:{eq.testers}</p>
                         </div>
-                        <p className="text-sm text-slate-500">測試單位:{eq.testers}</p>
-                      </div>
-                      <div className="p-5 flex-grow">
-                        <div className="flex items-center justify-between mb-5 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                          <div>
-                            <p className="text-xs text-slate-500 mb-1">目前評分</p>
-                            <div className="flex items-center">
-                              <span className="text-2xl font-black text-slate-800 mr-2">{eq.rating}</span>
-                              <div className="flex text-amber-400">
-                                <Star className="w-4 h-4 fill-current" /><Star className="w-4 h-4 fill-current" /><Star className="w-4 h-4 fill-current" /><Star className="w-4 h-4 fill-current" /><Star className="w-4 h-4 text-slate-200" />
+
+                        <div className="p-5 flex-grow">
+                          <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-2xl p-4 mb-4">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <p className="text-xs text-slate-600 mb-1 font-medium">目前評分</p>
+                                <div className="flex items-baseline">
+                                  <span className="text-3xl font-black text-slate-800">{eq.rating || '0'}</span>
+                                  <span className="text-sm text-slate-500 ml-1">/ 5.0</span>
+                                </div>
+                                <div className="mt-1"><StarRating rating={eq.rating} /></div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs text-slate-600 mb-1 font-medium">回饋人數</p>
+                                <p className="text-2xl font-bold text-slate-700">{eq.feedbackCount || '0'} <span className="text-sm font-normal">人</span></p>
                               </div>
                             </div>
+
+                            {parseInt(eq.feedbackCount) > 0 ? (
+                              <div className="border-t border-amber-200 pt-3">
+                                <RatingDistribution counts={eq.stars} totalPeople={parseInt(eq.feedbackCount)} />
+                              </div>
+                            ) : (
+                              <div className="border-t border-amber-200 pt-3 text-center">
+                                <p className="text-xs text-slate-500 italic">目前尚無同仁回饋,歡迎成為第一位!</p>
+                              </div>
+                            )}
                           </div>
-                          <div className="text-right">
-                            <p className="text-xs text-slate-500 mb-1">回饋人數</p>
-                            <p className="text-lg font-bold text-slate-700">{eq.feedbackCount} 人</p>
-                          </div>
+
+                          <FeedbackSection comments={eq.pros} type="pros" />
+                          <FeedbackSection comments={eq.cons} type="cons" />
+                          <FeedbackSection comments={eq.suggest} type="suggest" />
+
+                          <button
+                            onClick={() => {
+                              setSelectedEquipment(eq.name);
+                              setShowFeedbackModal(true);
+                            }}
+                            className="w-full mt-3 flex items-center justify-center text-sm bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white px-4 py-3 rounded-xl font-bold transition-all shadow-sm hover:shadow-md"
+                          >
+                            <MessageCircle className="w-4 h-4 mr-2" /> 我要回饋這個裝備
+                          </button>
                         </div>
-                        <h4 className="text-sm font-bold text-slate-700 mb-3">近期真實回饋:</h4>
-                        <ul className="space-y-3">
-                          {eq.comments.map((comment, idx) => (
-                            <li key={idx} className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 pl-4 border-l-4 border-l-blue-400">
-                              "{comment}"
-                            </li>
-                          ))}
-                        </ul>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -440,7 +562,7 @@ const App = () => {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col h-[80vh] max-h-[600px]">
             <div className="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50">
               <h3 className="font-bold text-lg text-slate-800 flex items-center">
-                <ThumbsUp className="w-5 h-5 mr-2 text-blue-600"/>
+                <ThumbsUp className="w-5 h-5 mr-2 text-blue-600" />
                 支持提案
               </h3>
               <button onClick={() => setShowVoteModal(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
@@ -449,12 +571,36 @@ const App = () => {
             </div>
             <div className="p-4 bg-blue-50 border-b border-blue-100">
               <p className="text-sm text-blue-800">
-                您正準備支持:<strong>{selectedProposalForVote}</strong><br/>
+                您正準備支持:<strong>{selectedProposalForVote}</strong><br />
                 請在下方表單中選擇該提案送出,系統將自動累計支持數。
               </p>
             </div>
             <div className="flex-grow w-full bg-white">
               <iframe src={VOTE_FORM_URL} width="100%" height="100%" frameBorder="0" title="支持提案表單">載入中...</iframe>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFeedbackModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col h-[85vh] max-h-[700px]">
+            <div className="flex justify-between items-center p-5 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <h3 className="font-bold text-lg text-slate-800 flex items-center">
+                <MessageCircle className="w-5 h-5 mr-2 text-blue-600" /> 裝備回饋表單
+              </h3>
+              <button onClick={() => setShowFeedbackModal(false)} className="p-2 hover:bg-white rounded-full transition-colors text-slate-500">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 bg-blue-50 border-b border-blue-100">
+              <p className="text-sm text-blue-800">
+                您正準備回饋:<strong>{selectedEquipment}</strong><br />
+                請在下方表單中選擇對應裝備並填寫您的真實心得。
+              </p>
+            </div>
+            <div className="flex-grow w-full bg-white">
+              <iframe src={FEEDBACK_FORM_URL} width="100%" height="100%" frameBorder="0" title="裝備回饋表單">載入中...</iframe>
             </div>
           </div>
         </div>
